@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="喝水提醒">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.svg">
+<title>DrinkUp · 喝水识别</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --border: #1e1e2e;
+    --accent: #00e5ff;
+    --accent2: #7c3aed;
+    --success: #00ff88;
+    --text: #e8e8f0;
+    --muted: #5a5a7a;
+    --danger: #ff4466;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans SC', sans-serif;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ── 摄像头画面 ── */
+  #video {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    z-index: 0;
+    opacity: 0;
+    transition: opacity 0.8s;
+  }
+  #video.ready { opacity: 1; }
+
+  /* ── 暗色遮罩 ── */
+  #overlay {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: linear-gradient(
+      to bottom,
+      rgba(10,10,15,0.55) 0%,
+      rgba(10,10,15,0.1) 40%,
+      rgba(10,10,15,0.1) 60%,
+      rgba(10,10,15,0.75) 100%
+    );
+    z-index: 1;
+  }
+
+  /* ── 扫描线动效 ── */
+  #scanline {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    z-index: 2;
+    opacity: 0;
+    animation: scan 3s linear infinite;
+  }
+  @keyframes scan {
+    0%   { top: 0%;   opacity: 0; }
+    5%   { opacity: 0.4; }
+    95%  { opacity: 0.4; }
+    100% { top: 100%; opacity: 0; }
+  }
+
+  /* ── 顶部标题栏 ── */
+  #topbar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: env(safe-area-inset-top, 16px) 20px 16px;
+    padding-top: max(env(safe-area-inset-top), 16px);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .app-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-shadow: 0 0 20px rgba(0,229,255,0.5);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: none;
+    transition: all 0.3s;
+  }
+  .status-dot.active {
+    background: var(--success);
+    box-shadow: 0 0 12px var(--success);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.4); opacity: 0.7; }
+  }
+
+  /* ── 中央识别框 ── */
+  #detect-frame {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -55%);
+    width: min(280px, 70vw);
+    height: min(280px, 70vw);
+    z-index: 5;
+  }
+
+  .corner {
+    position: absolute;
+    width: 28px; height: 28px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0.7;
+    transition: opacity 0.3s, border-color 0.3s;
+  }
+  .corner.tl { top: 0; left: 0; border-width: 2px 0 0 2px; }
+  .corner.tr { top: 0; right: 0; border-width: 2px 2px 0 0; }
+  .corner.bl { bottom: 0; left: 0; border-width: 0 0 2px 2px; }
+  .corner.br { bottom: 0; right: 0; border-width: 0 2px 2px 0; }
+
+  #detect-frame.drinking .corner {
+    border-color: var(--success);
+    opacity: 1;
+    animation: corner-glow 0.5s ease-in-out infinite alternate;
+  }
+  @keyframes corner-glow {
+    from { box-shadow: 0 0 8px var(--success); }
+    to   { box-shadow: 0 0 20px var(--success); }
+  }
+
+  /* ── 状态文字 ── */
+  #status-text {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, calc(-55% + min(160px, 35vw) + 20px));
+    z-index: 5;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    text-transform: uppercase;
+    transition: color 0.3s;
+    white-space: nowrap;
+  }
+  #status-text.drinking { color: var(--success); }
+
+  /* ── 进度环 ── */
+  #progress-ring {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -55%);
+    width: min(300px, 74vw);
+    height: min(300px, 74vw);
+    z-index: 4;
+  }
+  #progress-ring circle {
+    fill: none;
+    stroke: var(--success);
+    stroke-width: 2;
+    stroke-linecap: round;
+    transform-origin: center;
+    transform: rotate(-90deg);
+    transition: stroke-dashoffset 0.1s linear;
+    opacity: 0;
+  }
+
+  /* ── SUCCESS 弹出 ── */
+  #success-panel {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0);
+    pointer-events: none;
+    transition: background 0.3s;
+  }
+  #success-panel.show {
+    background: rgba(0,255,136,0.08);
+    pointer-events: auto;
+  }
+
+  .success-word {
+    font-family: 'Space Mono', monospace;
+    font-size: clamp(52px, 18vw, 88px);
+    font-weight: 700;
+    color: var(--success);
+    letter-spacing: 0.08em;
+    text-shadow:
+      0 0 40px rgba(0,255,136,0.8),
+      0 0 80px rgba(0,255,136,0.4);
+    opacity: 0;
+    transform: scale(0.7);
+    transition: opacity 0.3s, transform 0.3s;
+  }
+  #success-panel.show .success-word {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .success-sub {
+    margin-top: 12px;
+    font-size: 13px;
+    color: rgba(0,255,136,0.6);
+    letter-spacing: 0.15em;
+    opacity: 0;
+    transition: opacity 0.4s 0.15s;
+  }
+  #success-panel.show .success-sub { opacity: 1; }
+
+  /* ── 底部统计栏 ── */
+  #bottombar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    padding: 20px 24px;
+    padding-bottom: max(env(safe-area-inset-bottom), 24px);
+    z-index: 10;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  .stat-block { display: flex; flex-direction: column; gap: 4px; }
+  .stat-label {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-family: 'Space Mono', monospace;
+  }
+  .stat-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+    transition: color 0.3s;
+  }
+  .stat-value.highlight { color: var(--accent); }
+
+  /* ── 目标进度条 ── */
+  #goal-bar-wrap {
+    position: fixed;
+    bottom: max(env(safe-area-inset-bottom), 24px);
+    bottom: calc(max(env(safe-area-inset-bottom), 24px) + 72px);
+    left: 24px; right: 24px;
+    z-index: 10;
+  }
+  .goal-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    font-family: 'Space Mono', monospace;
+    margin-bottom: 6px;
+  }
+  .goal-track {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .goal-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.5s ease;
+  }
+
+  /* ── 启动屏 ── */
+  #splash {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--bg);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    transition: opacity 0.6s;
+  }
+  #splash.hide { opacity: 0; pointer-events: none; }
+
+  .splash-logo {
+    font-family: 'Space Mono', monospace;
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--accent);
+    text-shadow: 0 0 30px rgba(0,229,255,0.6);
+    letter-spacing: 0.1em;
+  }
+  .splash-sub {
+    font-size: 13px;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+
+  #start-btn {
+    margin-top: 16px;
+    padding: 14px 40px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.2em;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 0.2s, box-shadow 0.2s;
+  }
+  #start-btn:active {
+    background: rgba(0,229,255,0.1);
+    box-shadow: 0 0 20px rgba(0,229,255,0.3);
+  }
+
+  /* ── 粒子效果 ── */
+  .particle {
+    position: fixed;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--success);
+    pointer-events: none;
+    z-index: 25;
+    animation: particle-fly 0.8s ease-out forwards;
+  }
+  @keyframes particle-fly {
+    0%   { opacity: 1; transform: translate(0,0) scale(1); }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0); }
+  }
+
+  /* ── 权限提示 ── */
+  #perm-hint {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 50;
+    text-align: center;
+    padding: 32px 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: none;
+    max-width: 280px;
+  }
+  #perm-hint p { font-size: 14px; color: var(--muted); line-height: 1.7; }
+  #perm-hint .icon { font-size: 40px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+
+<!-- 启动屏 -->
+<div id="splash">
+  <div class="splash-logo">DRINKUP</div>
+  <div class="splash-sub">喝水识别 · 健康助手</div>
+  <button id="start-btn" onclick="startApp()">开始检测</button>
+</div>
+
+<!-- 权限提示 -->
+<div id="perm-hint">
+  <div class="icon">📷</div>
+  <p>需要摄像头权限<br>请在浏览器弹窗中点击<strong style="color:var(--text)">允许</strong></p>
+</div>
+
+<!-- 摄像头 -->
+<video id="video" autoplay playsinline muted></video>
+
+<!-- 遮罩 & 扫描线 -->
+<div id="overlay"></div>
+<div id="scanline"></div>
+
+<!-- 顶部栏 -->
+<div id="topbar">
+  <div class="app-title">DRINKUP</div>
+  <div class="status-dot" id="status-dot"></div>
+</div>
+
+<!-- 识别框 -->
+<div id="detect-frame">
+  <div class="corner tl"></div>
+  <div class="corner tr"></div>
+  <div class="corner bl"></div>
+  <div class="corner br"></div>
+</div>
+
+<!-- 进度环 SVG -->
+<svg id="progress-ring" viewBox="0 0 300 300">
+  <circle id="ring-circle" cx="150" cy="150" r="148"/>
+</svg>
+
+<!-- 状态文字 -->
+<div id="status-text">对准摄像头 · 做喝水动作</div>
+
+<!-- SUCCESS面板 -->
+<div id="success-panel">
+  <div class="success-word">SUCCESS</div>
+  <div class="success-sub">DRINKING DETECTED</div>
+</div>
+
+<!-- 目标进度 -->
+<div id="goal-bar-wrap">
+  <div class="goal-label">
+    <span>今日目标</span>
+    <span id="goal-label-right">0 / 8 次</span>
+  </div>
+  <div class="goal-track">
+    <div class="goal-fill" id="goal-fill"></div>
+  </div>
+</div>
+
+<!-- 底部统计 -->
+<div id="bottombar">
+  <div class="stat-block">
+    <div class="stat-label">今日次数</div>
+    <div class="stat-value" id="count-display">0</div>
+  </div>
+  <div class="stat-block" style="text-align:right">
+    <div class="stat-label">上次喝水</div>
+    <div class="stat-value" id="last-time" style="font-size:16px;padding-top:6px">--:--</div>
+  </div>
+</div>
+
+<!-- TensorFlow.js + MoveNet -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js"></script>
+
+<script>
+// ── 配置 ──────────────────────────────────────────────────────
+const DRINK_HOLD_MS    = 500;   // 持续多少毫秒触发成功
+const SUCCESS_SHOW_MS  = 2000;  // SUCCESS显示时间
+const DAILY_GOAL       = 8;     // 今日目标次数
+const WRIST_NOSE_RATIO = 0.55;  // 手腕到鼻子距离/肩宽阈值
+const ELBOW_ANGLE_MAX  = 120;   // 肘部最大角度
+
+// MoveNet 关键点索引
+const KP = {
+  NOSE:0, L_EYE:1, R_EYE:2,
+  L_SHOULDER:5, R_SHOULDER:6,
+  L_ELBOW:7,    R_ELBOW:8,
+  L_WRIST:9,    R_WRIST:10
+};
+
+// ── 状态 ──────────────────────────────────────────────────────
+let detector    = null;
+let drinkStart  = null;
+let successTime = null;
+let todayCount  = 0;
+let running     = false;
+
+// ── 工具函数 ──────────────────────────────────────────────────
+function angle3(a, b, c) {
+  const ba = [a.x-b.x, a.y-b.y];
+  const bc = [c.x-b.x, c.y-b.y];
+  const dot = ba[0]*bc[0] + ba[1]*bc[1];
+  const mag = Math.hypot(...ba) * Math.hypot(...bc);
+  return Math.acos(Math.max(-1, Math.min(1, dot/(mag+1e-6)))) * 180/Math.PI;
+}
+
+function dist(a, b) {
+  return Math.hypot(a.x-b.x, a.y-b.y);
+}
+
+function checkDrinking(keypoints) {
+  const get = idx => keypoints[idx];
+  const valid = idx => get(idx) && get(idx).score > 0.3;
+
+  if (!valid(KP.NOSE) || !valid(KP.L_SHOULDER) || !valid(KP.R_SHOULDER)) return false;
+
+  const nose      = get(KP.NOSE);
+  const lShoulder = get(KP.L_SHOULDER);
+  const rShoulder = get(KP.R_SHOULDER);
+  const shoulderW = dist(lShoulder, rShoulder) + 1e-6;
+
+  const sides = [
+    { shoulder: lShoulder, elbow: get(KP.L_ELBOW), wrist: get(KP.L_WRIST) },
+    { shoulder: rShoulder, elbow: get(KP.R_ELBOW), wrist: get(KP.R_WRIST) },
+  ];
+
+  for (const { shoulder, elbow, wrist } of sides) {
+    if (!elbow || !wrist || elbow.score < 0.3 || wrist.score < 0.3) continue;
+
+    const d     = dist(wrist, nose) / shoulderW;
+    const ang   = angle3(shoulder, elbow, wrist);
+    const above = wrist.y < elbow.y;
+
+    if (d < WRIST_NOSE_RATIO && ang < ELBOW_ANGLE_MAX && above) return true;
+  }
+  return false;
+}
+
+// ── 粒子爆炸 ──────────────────────────────────────────────────
+function spawnParticles() {
+  const cx = window.innerWidth / 2;
+  const cy = window.innerHeight / 2;
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const angle = (Math.PI * 2 * i) / 20;
+    const r = 80 + Math.random() * 120;
+    p.style.setProperty('--dx', Math.cos(angle)*r + 'px');
+    p.style.setProperty('--dy', Math.sin(angle)*r + 'px');
+    p.style.left = cx + 'px';
+    p.style.top  = cy + 'px';
+    p.style.animationDelay = Math.random() * 0.2 + 's';
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 1000);
+  }
+}
+
+// ── 进度环更新 ──────────────────────────────────────────────
+function updateRing(progress) {
+  const circle = document.getElementById('ring-circle');
+  const r = 148;
+  const circ = 2 * Math.PI * r;
+  circle.style.strokeDasharray = circ;
+  circle.style.strokeDashoffset = circ * (1 - progress);
+  circle.style.opacity = progress > 0 ? '0.8' : '0';
+}
+
+// ── 今日统计更新 ──────────────────────────────────────────────
+function updateStats() {
+  document.getElementById('count-display').textContent = todayCount;
+  const pct = Math.min(todayCount / DAILY_GOAL * 100, 100);
+  document.getElementById('goal-fill').style.width = pct + '%';
+  document.getElementById('goal-label-right').textContent =
+    todayCount + ' / ' + DAILY_GOAL + ' 次';
+
+  const now = new Date();
+  document.getElementById('last-time').textContent =
+    String(now.getHours()).padStart(2,'0') + ':' +
+    String(now.getMinutes()).padStart(2,'0');
+}
+
+// ── 主检测循环 ────────────────────────────────────────────────
+async function detectLoop(video) {
+  const frame     = document.getElementById('detect-frame');
+  const statusTxt = document.getElementById('status-text');
+  const dot       = document.getElementById('status-dot');
+  const panel     = document.getElementById('success-panel');
+
+  async function loop() {
+    if (!running) return;
+
+    const poses = await detector.estimatePoses(video);
+    const now   = Date.now();
+    let drinking = false;
+
+    if (poses.length > 0) {
+      drinking = checkDrinking(poses[0].keypoints);
+    }
+
+    // SUCCESS 展示中
+    if (successTime && (now - successTime) < SUCCESS_SHOW_MS) {
+      requestAnimationFrame(loop);
+      return;
+    } else if (successTime) {
+      panel.classList.remove('show');
+      successTime = null;
+    }
+
+    if (drinking) {
+      dot.classList.add('active');
+      frame.classList.add('drinking');
+      statusTxt.classList.add('drinking');
+      statusTxt.textContent = '检测到喝水动作...';
+
+      if (!drinkStart) drinkStart = now;
+      const progress = Math.min((now - drinkStart) / DRINK_HOLD_MS, 1.0);
+      updateRing(progress);
+
+      if (progress >= 1.0) {
+        todayCount++;
+        successTime = now;
+        drinkStart  = null;
+        updateRing(0);
+        updateStats();
+        panel.classList.add('show');
+        spawnParticles();
+        frame.classList.remove('drinking');
+        statusTxt.textContent = '对准摄像头 · 做喝水动作';
+        statusTxt.classList.remove('drinking');
+      }
+    } else {
+      dot.classList.remove('active');
+      frame.classList.remove('drinking');
+      statusTxt.classList.remove('drinking');
+      statusTxt.textContent = '对准摄像头 · 做喝水动作';
+      drinkStart = null;
+      updateRing(0);
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  loop();
+}
+
+// ── 启动应用 ──────────────────────────────────────────────────
+async function startApp() {
+  document.getElementById('start-btn').textContent = '加载中...';
+  document.getElementById('perm-hint').style.display = 'block';
+
+  try {
+    // 获取摄像头（优先前置）
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+
+    document.getElementById('perm-hint').style.display = 'none';
+
+    const video = document.getElementById('video');
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    video.classList.add('ready');
+
+    // 加载 MoveNet 模型
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+    );
+
+    running = true;
+
+    // 隐藏启动屏
+    document.getElementById('splash').classList.add('hide');
+
+    // 开始检测
+    detectLoop(video);
+
+  } catch(e) {
+    document.getElementById('perm-hint').style.display = 'none';
+    document.getElementById('start-btn').textContent = '请允许摄像头权限';
+    console.error(e);
+  }
+}
+</script>
+</body>
+</html>
