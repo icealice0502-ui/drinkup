@@ -1,13 +1,11 @@
 {
-  "name": "DrinkUp · 喝水识别",
+  "name": "DrinkUp · 喝水监督",
   "short_name": "DrinkUp",
-  "description": "用摄像头识别喝水动作，培养健康喝水习惯",
+  "description": "喝水监督助手，超时震动惩罚",
   "start_url": "./index.html",
   "display": "fullscreen",
   "orientation": "portrait",
   "background_color": "#0a0a0f",
   "theme_color": "#0a0a0f",
-  "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
-  ]
+  "icons": [{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
 }
