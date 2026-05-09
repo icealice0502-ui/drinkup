@@ -83,8 +83,12 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
 #spanel.show .semoji{opacity:1}
 .ssub{margin-top:10px;font-size:12px;color:rgba(0,255,136,0.6);letter-spacing:0.18em;opacity:0;transition:opacity 0.3s 0.2s}
 #spanel.show .ssub{opacity:1}
-.stap{margin-top:28px;font-size:11px;color:var(--muted);letter-spacing:0.15em;opacity:0;transition:opacity 0.3s 0.5s}
-#spanel.show .stap{opacity:1}
+/* 倒计时关闭提示 */
+#close-hint{margin-top:24px;font-size:13px;color:var(--muted);letter-spacing:0.1em;opacity:0;transition:opacity 0.3s 0.4s;font-family:'Space Mono',monospace}
+#spanel.show #close-hint{opacity:1}
+#close-bar-wrap{margin-top:12px;width:180px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;opacity:0;transition:opacity 0.3s 0.4s}
+#spanel.show #close-bar-wrap{opacity:1}
+#close-bar{height:100%;background:var(--success);width:0%;transition:width 0.1s linear;border-radius:2px}
 
 #bottombar{position:fixed;bottom:0;left:0;right:0;z-index:10;padding:20px 24px max(env(safe-area-inset-bottom),24px);display:flex;align-items:flex-end;justify-content:space-between}
 .slabel{font-size:10px;letter-spacing:0.2em;color:var(--muted);text-transform:uppercase;font-family:'Space Mono',monospace}
@@ -93,7 +97,6 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
 #splash{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity 0.6s;padding:24px}
 #splash.hide{opacity:0;pointer-events:none}
 .slogo{font-family:'Space Mono',monospace;font-size:30px;font-weight:700;color:var(--accent);text-shadow:0 0 30px rgba(0,229,255,0.6);letter-spacing:0.1em}
-.sdesc{font-size:12px;color:var(--muted);letter-spacing:0.12em;text-align:center;line-height:1.8;max-width:260px}
 .srules{margin-top:4px;padding:14px 18px;border:1px solid var(--border);border-radius:4px;font-size:12px;color:var(--muted);line-height:2.2;max-width:290px;text-align:left}
 .srules span{color:var(--text)}
 #sbtn{margin-top:12px;padding:13px 44px;background:transparent;border:1px solid var(--accent);color:var(--accent);font-family:'Space Mono',monospace;font-size:13px;letter-spacing:0.2em;border-radius:2px;cursor:pointer;transition:all 0.2s}
@@ -109,10 +112,9 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
 
 <div id="splash">
   <div class="slogo">💧 DRINKUP</div>
-  <div class="sdesc">喝水监督助手</div>
   <div class="srules">
     ⏱ <span>5分钟</span>内必须喝水<br>
-    ✅ 检测到喝水 → <span>爆金币庆祝！</span><br>
+    ✅ 检测到喝水 → <span>爆金币 · 自动关闭</span><br>
     ❌ 超时未喝水 → <span>手机持续震动</span><br>
     💡 震动中喝水 → <span>立即解除惩罚</span>
   </div>
@@ -148,11 +150,12 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
   <div class="pbanner-sub">完成喝水动作即可解除震动</div>
 </div>
 
-<div id="spanel" onclick="dismissSuccess()">
+<div id="spanel">
   <div class="semoji" id="semoji">🎉</div>
   <div class="sw" id="sword">SUCCESS!</div>
   <div class="ssub" id="ssub">你太棒了！</div>
-  <div class="stap">点击继续</div>
+  <div id="close-hint">3秒后返回桌面...</div>
+  <div id="close-bar-wrap"><div id="close-bar"></div></div>
 </div>
 
 <div id="bottombar">
@@ -171,21 +174,21 @@ html,body{width:100%;height:100%;background:var(--bg);color:var(--text);font-fam
 <script>
 // ── 配置 ────────────────────────────────────────────────────
 const CFG = {
-  TOTAL_SEC       : 300,
-  DRINK_HOLD_MS   : 500,
-  SUCCESS_MS      : 4000,
-  WARN_SEC        : 30,
-  WRIST_RATIO     : 0.55,
-  ELBOW_MAX       : 120,
-  SC_START        : 'StartVibration',
-  SC_STOP         : 'StopVibration',
+  TOTAL_SEC     : 300,
+  DRINK_HOLD_MS : 500,
+  CLOSE_DELAY_MS: 3000,   // 成功后多少毫秒跳转关闭
+  WARN_SEC      : 30,
+  WRIST_RATIO   : 0.55,
+  ELBOW_MAX     : 120,
+  SC_START      : 'StartVibration',
+  SC_STOP       : 'StopVibration',
 };
-const KP = {NOSE:0,LS:5,RS:6,LE:7,RE:8,LW:9,RW:10};
+const KP={NOSE:0,LS:5,RS:6,LE:7,RE:8,LW:9,RW:10};
 
 // ── 状态 ────────────────────────────────────────────────────
 let detector=null, timeLeft=CFG.TOTAL_SEC;
-let ticker=null, drinkStart=null;
-let isExpired=false, isPunishing=false, isSuccess=false;
+let ticker=null, drinkStart=null, closeTimer=null, closeBarTimer=null;
+let isExpired=false, isPunishing=false, isDone=false;
 let todayCount=0;
 
 // ── 工具 ────────────────────────────────────────────────────
@@ -196,32 +199,54 @@ function ang3(a,b,c){
 }
 function fmt(s){const m=Math.floor(s/60),r=s%60;return m+':'+(r<10?'0':'')+r}
 
-// ── 检测 ────────────────────────────────────────────────────
-function checkWater(kps){
-  const g=i=>kps[i], ok=i=>g(i)&&g(i).score>0.3;
-  if(!ok(KP.NOSE)||!ok(KP.LS)||!ok(KP.RS)) return false;
-  const nose=g(KP.NOSE),ls=g(KP.LS),rs=g(KP.RS),sw=d2(ls,rs)+1e-6;
-  for(const[sh,el,wr]of[[ls,g(KP.LE),g(KP.LW)],[rs,g(KP.RE),g(KP.RW)]]){
-    if(!el||!wr||el.score<0.3||wr.score<0.3) continue;
-    if(d2(wr,nose)/sw<CFG.WRIST_RATIO && ang3(sh,el,wr)<CFG.ELBOW_MAX && wr.y<el.y) return true;
+// ── 触感反馈（网页端确认） ────────────────────────────────────
+function haptic(style='medium'){
+  // iOS Safari 支持 DeviceMotionEvent 触感（需用户交互触发）
+  if(navigator.vibrate){
+    // Android
+    const patterns={light:[30],medium:[60],heavy:[100,50,100]};
+    navigator.vibrate(patterns[style]||patterns.medium);
   }
-  return false;
+  // iOS：通过 AudioContext 播放极短静音触发系统触感感知
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=ctx.createOscillator();
+    const gain=ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.001,ctx.currentTime);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime+0.05);
+    ctx.close();
+  }catch(e){}
 }
 
-// ── 快捷指令 ────────────────────────────────────────────────
-function runShortcut(name){
-  // 通过iframe触发，避免页面跳转导致摄像头中断
-  const f=document.createElement('iframe');
-  f.style.display='none';
-  f.src=`shortcuts://run-shortcut?name=${encodeURIComponent(name)}`;
-  document.body.appendChild(f);
-  setTimeout(()=>f.remove(), 2000);
+// ── 快捷指令触发（双重保障） ────────────────────────────────
+function runShortcut(name, isStop=false){
+  haptic(isStop ? 'light' : 'heavy');
+
+  const url=`shortcuts://run-shortcut?name=${encodeURIComponent(name)}`;
+
+  // 方案1：直接跳转（最可靠）
+  // iOS Safari 下 location.href 跳转 shortcuts:// 后会自动回到网页
+  // 摄像头不会中断（网页在后台保持活跃）
+  window.location.href = url;
+
+  // 方案2：100ms后用 iframe 作为保险（防止方案1被拦截）
+  setTimeout(()=>{
+    try{
+      const f=document.createElement('iframe');
+      f.style.display='none';
+      f.src=url;
+      document.body.appendChild(f);
+      setTimeout(()=>f.remove(),3000);
+    }catch(e){}
+  },100);
 }
 
+// ── 惩罚控制 ────────────────────────────────────────────────
 function triggerPunishment(){
   isPunishing=true;
-  runShortcut(CFG.SC_START);
-  // 惩罚UI
+  runShortcut(CFG.SC_START, false);
   document.getElementById('overlay').classList.add('danger');
   document.getElementById('danger-border').classList.add('show');
   document.getElementById('scanline').classList.add('fast');
@@ -238,7 +263,7 @@ function triggerPunishment(){
 }
 
 function stopPunishment(){
-  runShortcut(CFG.SC_STOP);
+  runShortcut(CFG.SC_STOP, true);
   isPunishing=false;
   document.getElementById('overlay').classList.remove('danger');
   document.getElementById('danger-border').classList.remove('show');
@@ -252,73 +277,105 @@ function stopPunishment(){
 function boom(){
   const cx=innerWidth/2,cy=innerHeight/2;
   const emojis=['🪙','💰','✨','🌟','💫','🎊','🎉'];
-  for(let i=0;i<28;i++){
+  for(let i=0;i<30;i++){
     const el=document.createElement('div');
     el.className='coin';
     el.textContent=emojis[i%emojis.length];
     const a=Math.random()*Math.PI*2,r=90+Math.random()*220;
-    el.style.cssText=`left:${cx}px;top:${cy}px;--dx:${Math.cos(a)*r}px;--dy:${Math.sin(a)*r-80}px;--dr:${Math.random()*720-360}deg;animation-delay:${Math.random()*0.3}s;animation-duration:${0.8+Math.random()*0.6}s`;
+    el.style.cssText=`left:${cx}px;top:${cy}px;--dx:${Math.cos(a)*r}px;--dy:${Math.sin(a)*r-100}px;--dr:${Math.random()*720-360}deg;animation-delay:${Math.random()*0.3}s;animation-duration:${0.8+Math.random()*0.6}s`;
     document.body.appendChild(el);
-    setTimeout(()=>el.remove(),1600);
+    setTimeout(()=>el.remove(),1800);
   }
-  for(let i=0;i<16;i++){
+  for(let i=0;i<18;i++){
     const p=document.createElement('div');
     p.className='ptcl';
     const a=Math.random()*Math.PI*2,r=70+Math.random()*160;
     p.style.cssText=`left:${cx}px;top:${cy}px;--dx:${Math.cos(a)*r}px;--dy:${Math.sin(a)*r}px;animation-delay:${Math.random()*0.2}s`;
     document.body.appendChild(p);
-    setTimeout(()=>p.remove(),1100);
+    setTimeout(()=>p.remove(),1200);
   }
+}
+
+// ── 关闭进度条动画 ────────────────────────────────────────
+function startCloseBar(){
+  const bar=document.getElementById('close-bar');
+  const total=CFG.CLOSE_DELAY_MS;
+  const step=50;
+  let elapsed=0;
+  clearInterval(closeBarTimer);
+  closeBarTimer=setInterval(()=>{
+    elapsed+=step;
+    bar.style.width=Math.min(elapsed/total*100,100)+'%';
+    if(elapsed>=total) clearInterval(closeBarTimer);
+  },step);
 }
 
 // ── 成功处理 ────────────────────────────────────────────────
 function onDrinkDetected(){
+  if(isDone) return;
+  isDone=true; // ← 关键：设置完成标志，检测循环不再触发
+
   const wasPunishing=isPunishing;
   if(wasPunishing) stopPunishment();
 
-  todayCount++;
-  isSuccess=true;
+  // 停止倒计时
+  clearInterval(ticker);
+  ticker=null;
   drinkStart=null;
   updateRing(0);
 
-  document.getElementById('cval').textContent=todayCount;
+  // 统计
+  todayCount++;
   const n=new Date();
-  document.getElementById('ltime').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+  document.getElementById('cval').textContent=todayCount;
+  document.getElementById('ltime').textContent=
+    String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
 
+  // Success UI
   document.getElementById('semoji').textContent=wasPunishing?'🔓':'🎉';
   document.getElementById('sword').textContent=wasPunishing?'解除成功！':'SUCCESS!';
-  document.getElementById('ssub').textContent=wasPunishing?'惩罚已解除，你终于喝水了！':['你太棒了！','继续保持！','健康第一！','喝水英雄！'][Math.floor(Math.random()*4)];
-  document.getElementById('spanel').classList.add('show');
-  boom();
+  document.getElementById('ssub').textContent=wasPunishing
+    ?'惩罚已解除，补水完成！'
+    :['你太棒了！','继续保持！','健康第一！','喝水英雄！'][Math.floor(Math.random()*4)];
 
+  document.getElementById('spanel').classList.add('show');
   document.getElementById('detect-frame').className='';
   document.getElementById('hint').className='';
   document.getElementById('sdot').className='sdot';
 
-  setTimeout(()=>{ if(isSuccess) dismissSuccess(); }, CFG.SUCCESS_MS);
+  boom();
+  startCloseBar();
+
+  // 3秒后跳转 shortcuts:// 模拟返回桌面
+  clearTimeout(closeTimer);
+  closeTimer=setTimeout(()=>{
+    // 先尝试返回上一页（如果是从快捷指令打开的）
+    // 再跳转 shortcuts:// 让系统切回快捷指令/桌面
+    window.location.href='shortcuts://';
+  }, CFG.CLOSE_DELAY_MS);
 }
 
-function dismissSuccess(){
-  if(!isSuccess) return;
-  isSuccess=false;
-  document.getElementById('spanel').classList.remove('show');
-  // 重置倒计时
-  timeLeft=CFG.TOTAL_SEC;
-  isExpired=false;
-  isPunishing=false;
-  updateCountdown();
-  startTicker();
+// ── 检测 ────────────────────────────────────────────────────
+function checkWater(kps){
+  const g=i=>kps[i],ok=i=>g(i)&&g(i).score>0.3;
+  if(!ok(KP.NOSE)||!ok(KP.LS)||!ok(KP.RS)) return false;
+  const nose=g(KP.NOSE),ls=g(KP.LS),rs=g(KP.RS),sw=d2(ls,rs)+1e-6;
+  for(const[sh,el,wr]of[[ls,g(KP.LE),g(KP.LW)],[rs,g(KP.RE),g(KP.RW)]]){
+    if(!el||!wr||el.score<0.3||wr.score<0.3) continue;
+    if(d2(wr,nose)/sw<CFG.WRIST_RATIO&&ang3(sh,el,wr)<CFG.ELBOW_MAX&&wr.y<el.y) return true;
+  }
+  return false;
 }
 
 // ── 倒计时 ────────────────────────────────────────────────
 function updateCountdown(){
-  if(isPunishing) return;
+  if(isPunishing||isDone) return;
   const el=document.getElementById('cdown-num');
   const lb=document.getElementById('cdown-lbl');
   el.textContent=fmt(timeLeft);
   el.className='';
-  if(timeLeft<=10){el.classList.add('danger')}
-  else if(timeLeft<=CFG.WARN_SEC){el.classList.add('warn')}
+  if(timeLeft<=10) el.classList.add('danger');
+  else if(timeLeft<=CFG.WARN_SEC) el.classList.add('warn');
   if(timeLeft<=CFG.WARN_SEC){
     lb.textContent='⚠ 快去喝水！';
     lb.style.color=timeLeft<=10?'var(--danger)':'var(--warn)';
@@ -331,7 +388,7 @@ function updateCountdown(){
 function startTicker(){
   clearInterval(ticker);
   ticker=setInterval(()=>{
-    if(isSuccess) return;
+    if(isDone) return;
     timeLeft--;
     updateCountdown();
     if(timeLeft<=0){
@@ -350,10 +407,11 @@ function updateRing(p){
   c.style.opacity=p>0?'0.9':'0';
 }
 
-// ── 检测循环（惩罚中持续运行）────────────────────────────────
+// ── 检测主循环 ────────────────────────────────────────────
 async function detectLoop(video){
   async function loop(){
-    if(isSuccess){requestAnimationFrame(loop);return}
+    // ← isDone 后停止一切检测
+    if(isDone){ updateRing(0); return; }
 
     let drinking=false;
     try{
@@ -363,7 +421,6 @@ async function detectLoop(video){
 
     const now=Date.now();
 
-    // 更新UI（惩罚中只更新点点，不改识别框）
     if(!isPunishing){
       document.getElementById('sdot').className=drinking?'sdot on':'sdot';
       document.getElementById('detect-frame').classList.toggle('drinking',drinking);
@@ -375,7 +432,7 @@ async function detectLoop(video){
       if(!drinkStart) drinkStart=now;
       const prog=Math.min((now-drinkStart)/CFG.DRINK_HOLD_MS,1.0);
       updateRing(prog);
-      if(prog>=1.0) onDrinkDetected();
+      if(prog>=1.0) { onDrinkDetected(); return; } // ← 成功后不再 requestAnimationFrame
     } else {
       drinkStart=null;
       if(!isPunishing) updateRing(0);
@@ -391,7 +448,9 @@ async function startApp(){
   const btn=document.getElementById('sbtn');
   btn.textContent='获取摄像头...'; btn.style.opacity='0.6';
   try{
-    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+    const stream=await navigator.mediaDevices.getUserMedia(
+      {video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false}
+    );
     const video=document.getElementById('video');
     video.srcObject=stream;
     await new Promise(r=>video.onloadedmetadata=r);
